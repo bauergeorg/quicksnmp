@@ -1,5 +1,7 @@
+import pysnmp
 from pysnmp import hlapi
 
+RETRY_LIMIT = 3
 
 def construct_object_types(list_of_oids):
     object_types = []
@@ -57,31 +59,35 @@ def get_bulk_auto(target, oids, credentials, count_oid, start_from=0, port=161,
 
 
 def cast(value):
-    try:
+    if type(value) == pysnmp.proto.rfc1902.OctetString or type(value) == str:
+        return str(value)
+    elif type(value) == pysnmp.proto.rfc1902.TimeTicks or type(value) == float:
+        return float(value)
+    elif type(value) == pysnmp.proto.rfc1902.Integer or type(value) == pysnmp.proto.rfc1902.Integer32 or type(value) == pysnmp.proto.rfc1902.Unsigned32 or type(value) == pysnmp.proto.rfc1902.Gauge32 or type(value) == pysnmp.proto.rfc1902.Counter32 or type(value) == int:
         return int(value)
-    except (ValueError, TypeError):
-        try:
-            return float(value)
-        except (ValueError, TypeError):
-            try:
-                return str(value)
-            except (ValueError, TypeError):
-                pass
-    return value
+    else:
+        raise Exception("Type '{}' not implemented yet!".format(type(value)))
 
 
 def fetch(handler, count):
     result = []
     for i in range(count):
-        try:
+        retry_counter = 0
+        while(1):
+            # get message
             error_indication, error_status, error_index, var_binds = next(handler)
+            # no error
             if not error_indication and not error_status:
                 items = {}
                 for var_bind in var_binds:
                     items[str(var_bind[0])] = cast(var_bind[1])
                 result.append(items)
+                break
+            # no error
             else:
-                raise RuntimeError('Got SNMP error: {0}'.format(error_indication))
-        except StopIteration:
-            break
+                retry_counter += 1
+                if retry_counter >= RETRY_LIMIT:
+                    raise RuntimeError('Got SNMP error: {} , {}, {}'.format(error_indication, error_status, error_index))
+                else:
+                    print("Init retry cause of SNMP error: {} , {}, {} ".format(error_indication, error_status, error_index))
     return result
